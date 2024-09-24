@@ -1,8 +1,8 @@
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
+import requests
 
-# Implementando cache para carregar arquivos pesados
 @st.cache_data
 def carregar_dados_covid():
     df = pd.read_excel("venv\data\dados_covid.xlsx")
@@ -18,11 +18,10 @@ def carregar_dados_2024():
     df_2024 = pd.concat([df_2024, df_2024_2], ignore_index=True)
     return df_2024
 
-# Carregar dados
 df, df_populacao = carregar_dados_covid()
 df_2024 = carregar_dados_2024()
 
-# Aplicando manipulações nos dados
+
 df_populacao["COD 6 DIGITOS"] = df_populacao["Código municipal"].apply(lambda x: x[:6])
 df_doses_agrupado = df.groupby(["Município Ocorrência", "COD IBGE"]).sum().reset_index()
 df_populacao["pessoas"] = df_populacao["pessoas"].astype(int)
@@ -46,12 +45,10 @@ st.header("Estatísticas Vacinação do Brasil")
 st.title("Vacinação por Estado")
 st.table(df_estados_agrupados)
 
-# Top 10 municípios por doses aplicadas
 df_cidades_agrupadas_top_10 = df_cidades_agrupadas.head(10)
 st.title("Top 10 Municípios por Total de Doses Aplicadas")
 st.table(df_cidades_agrupadas_top_10)
 
-# Manipulação dos dados de PE para o mapa
 municipios = pd.read_csv("venv\data\municipios.csv")
 municipios["codigo_ibge_6_d"] = municipios["codigo_ibge"].astype(str).apply(lambda x: x[:6]).astype(int)
 
@@ -76,6 +73,34 @@ layer = pdk.Layer(
 )
 r = pdk.Deck(layers=[layer], initial_view_state=view_state)
 st.pydeck_chart(r)
+
+st.title("Upload de Arquivo CSV")
+uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
+if uploaded_file is not None:
+    df_uploaded = pd.read_csv(uploaded_file)
+    st.write("Arquivo carregado com sucesso!")
+    st.write(df_uploaded)
+
+
+st.title("Download de Dados")
+st.download_button(
+    label="Baixar dados de vacinação por estado",
+    data=df_estados_agrupados.to_csv(index=False),
+    file_name="dados_vacinacao_estados.csv",
+    mime="text/csv"
+)
+
+url_locais_vacinacao = "https://minhavacina.recife.pe.gov.br/api/v1/unscheduled_vaccination_sites.json"
+response_locais_vacinacao = requests.get(url_locais_vacinacao)
+if response_locais_vacinacao.status_code == 200:
+    dados_locais = response_locais_vacinacao.json()
+    df_locais_vacinacao = pd.DataFrame(dados_locais)
+    df_locais_vacinacao = df_locais_vacinacao.drop(columns="id", axis=1)
+    df_locais_vacinacao.columns = ["Local", "Público", "Bairro", "Endereço", "Horários"]
+
+st.title("Locais Vacinação Recife")
+st.dataframe(df_locais_vacinacao)
+
 
 st.markdown("### Fontes:")
 st.markdown("[Vacinação por município - Ministério da Saúde](https://infoms.saude.gov.br/extensions/SEIDIGI_DEMAS_VACINA_C19_CNES_OCORRENCIA/SEIDIGI_DEMAS_VACINA_C19_CNES_OCORRENCIA.html)")
