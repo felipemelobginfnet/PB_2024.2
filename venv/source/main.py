@@ -1,14 +1,30 @@
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel
 import uvicorn
+from transformers import pipeline
+
+class TextoEntrada(BaseModel):
+    texto: str
+
+class TextoSaida(BaseModel):
+    texto_original: str
+    analise: str
+    probabilidade: float
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+modelo_sentimento = pipeline(
+    "sentiment-analysis",
+    model="pierreguillou/bert-base-cased-sentiment-br",
+    framework="pt" 
+)
 
 @st.cache_data
 def carregar_dados_covid():
@@ -33,6 +49,18 @@ def ler_dados():
 @app.post("/envio/", response_model=dict)
 def enviar_dados(item: dict):
     return {"status": "Dados recebidos com sucesso", "dados": item}
+
+@app.post("/processar_texto/", response_model=TextoSaida)
+def processar_texto(entrada: TextoEntrada):
+    try:
+        resultado = modelo_sentimento(entrada.texto)[0]
+        return {
+            "texto_original": entrada.texto,
+            "analise": resultado["label"],
+            "probabilidade": round(resultado["score"], 6)
+        }
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erro ao processar o texto")
 
 def render_pagina_1():
     st.title("Estatísticas Vacinação do Brasil")
