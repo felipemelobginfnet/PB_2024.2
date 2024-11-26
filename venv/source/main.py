@@ -11,10 +11,8 @@ from transformers import pipeline
 from io import BytesIO
 import os
 
-# Configuração do token da Hugging Face
-os.environ["HUGGINGFACE_HUB_TOKEN"] = "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"
+os.environ["HUGGINGFACE_HUB_TOKEN"] = "retirada"
 
-# Modelos para FastAPI
 class TextoEntrada(BaseModel):
     texto: str
 
@@ -22,15 +20,12 @@ class TextoSaida(BaseModel):
     texto_original: str
     resposta: str
 
-# Inicialização da API
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# Pipeline de análise de LLMs
 modelo_generativo = pipeline("text-generation", model="pierreguillou/gpt2-small-portuguese", device=-1)
 modelo_sumarizacao = pipeline("summarization", model="facebook/bart-large-cnn", device=-1)
 
-# Cache de dados
 @st.cache_data
 def carregar_dados_covid():
     df = pd.read_excel("venv/data/dados_covid.xlsx")
@@ -44,11 +39,9 @@ def carregar_dados_2024():
     df_2024 = pd.concat([df_2024, df_2024_2], ignore_index=True)
     return df_2024
 
-# Carregamento inicial de dados
 df, df_populacao = carregar_dados_covid()
 df_2024 = carregar_dados_2024()
 
-# Rotas da API
 @app.get("/dados/", response_model=dict)
 def ler_dados():
     return JSONResponse(content=jsonable_encoder(df.to_dict()))
@@ -82,7 +75,6 @@ def sumarizar_texto(entrada: TextoEntrada):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao sumarizar texto: {str(e)}")
 
-# Funções de renderização do Streamlit
 def render_pagina_1():
     st.title("Estatísticas de Vacinação no Brasil")
     df_populacao["COD 6 DIGITOS"] = df_populacao["Código municipal"].apply(lambda x: x[:6])
@@ -149,7 +141,6 @@ def render_pagina_4():
         except Exception as e:
             st.error(f"Erro: {e}")
 
-# Navegação entre páginas
 pagina_selecionada = st.sidebar.radio("Navegação", ["Estatísticas", "Mapa", "Upload e Download", "IA (Memória e Sumarização)"])
 
 if pagina_selecionada == "Estatísticas":
@@ -161,6 +152,5 @@ elif pagina_selecionada == "Upload e Download":
 elif pagina_selecionada == "IA (Memória e Sumarização)":
     render_pagina_4()
 
-# Inicialização da API
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
