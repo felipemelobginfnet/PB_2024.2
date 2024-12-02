@@ -8,126 +8,261 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 import uvicorn
 from transformers import pipeline
+import os
+import requests
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import plotly.express as px
 
-class TextoEntrada(BaseModel):
+os.environ["HUGGINGFACE_HUB_TOKEN"] = "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"
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+modelo_perguntas = pipeline("question-answering", model="bert-large-uncased-whole-word-masking-finetuned-squad", device=-1)
+
+def responder_pergunta(contexto, pergunta):
+    if not contexto or not pergunta:
+        return "Por favor, forneça um contexto e uma pergunta válidos."
+    resposta = modelo_perguntas(question=pergunta, context=contexto)
+    return resposta["answer"]
+
+class EntradaTexto(BaseModel):
     texto: str
 
-class TextoSaida(BaseModel):
+class SaidaTexto(BaseModel):
     texto_original: str
-    analise: str
-    probabilidade: float
+    resposta: str
 
-app = FastAPI()
+app = FastAPI(title="API COVID-19", description="API para análise de dados COVID-19")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-modelo_sentimento = pipeline(
-    "sentiment-analysis",
-    model="pierreguillou/bert-base-cased-sentiment-br",
-    framework="pt" 
-)
-
-@st.cache_data
+@st.cache_data(ttl=3600)
 def carregar_dados_covid():
     df = pd.read_excel("venv/data/dados_covid.xlsx")
     df_populacao = pd.read_excel("venv/data/censo_2022_populacao_municipios.xlsx", dtype="str")
     return df, df_populacao
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def carregar_dados_2024():
-    df_2024 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte1_30ago2024.csv", sep=";")
-    df_2024_2 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte2_30ago2024.csv", sep=";")
-    df_2024 = pd.concat([df_2024, df_2024_2], ignore_index=True)
+    df_2024_parte1 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte1_30ago2024.csv", sep=";")
+    df_2024_parte2 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte2_30ago2024.csv", sep=";")
+    df_2024 = pd.concat([df_2024_parte1, df_2024_parte2], ignore_index=True)
     return df_2024
 
-df, df_populacao = carregar_dados_covid()
-df_2024 = carregar_dados_2024()
+url_vacinacao = "https://minhavacina.recife.pe.gov.br/api/v1/unscheduled_vaccination_sites.json"
+try:
+    resposta_vacinacao = requests.get(url_vacinacao)
+    if resposta_vacinacao.status_code == 200:
+        dados_vacinacao = resposta_vacinacao.json()
+        df_locais_vacinacao = pd.DataFrame(dados_vacinacao).drop(columns="id", axis=1)
+        df_locais_vacinacao.columns = ["Local", "Público", "Bairro", "Endereço", "Horários"]
+    else:
+        df_locais_vacinacao = pd.DataFrame(columns=["Local", "Público", "Bairro", "Endereço", "Horários"])
+except:
+    df_locais_vacinacao = pd.DataFrame(columns=["Local", "Público", "Bairro", "Endereço", "Horários"])
 
-@app.get("/dados/", response_model=dict)
-def ler_dados():
-    return JSONResponse(content=jsonable_encoder(df.to_dict()))
+@app.get("/locais_vacinacao/", response_model=dict)
+def obter_locais_vacinacao():
+    return JSONResponse(content=jsonable_encoder(df_locais_vacinacao.to_dict()))
 
-@app.post("/envio/", response_model=dict)
-def enviar_dados(item: dict):
-    return {"status": "Dados recebidos com sucesso", "dados": item}
+@app.post("/resposta_locais/", response_model=SaidaTexto)
+def gerar_resposta_locais(entrada: EntradaTexto):
+    texto_contexto = "\n".join(df_locais_vacinacao.apply(
+        lambda x: f"{x['Local']} - {x['Bairro']}: {x['Endereço']} ({x['Horários']})", axis=1))
+    resposta = responder_pergunta(contexto=texto_contexto, pergunta=entrada.texto)
+    return SaidaTexto(texto_original=entrada.texto, resposta=resposta)
 
-@app.post("/processar_texto/", response_model=TextoSaida)
-def processar_texto(entrada: TextoEntrada):
-    try:
-        resultado = modelo_sentimento(entrada.texto)[0]
-        return {
-            "texto_original": entrada.texto,
-            "analise": resultado["label"],
-            "probabilidade": round(resultado["score"], 6)
-        }
-    except Exception:
-        raise HTTPException(status_code=500, detail="Erro ao processar o texto")
+def criar_nuvem_palavras(df, coluna):
+    texto = " ".join(df[coluna].astype(str).values)
+    nuvem = WordCloud(width=800, height=400, background_color="white", collocations=False).generate(texto)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(nuvem, interpolation="bilinear")
+    ax.axis("off")
+    return fig
 
-def render_pagina_1():
-    st.title("Estatísticas Vacinação do Brasil")
-    df_populacao["COD 6 DIGITOS"] = df_populacao["Código municipal"].apply(lambda x: x[:6])
-    df_doses_agrupado = df.groupby(["Município Ocorrência", "COD IBGE"]).sum().reset_index()
-    df_populacao["pessoas"] = df_populacao["pessoas"].astype(int)
+def renderizar_pagina_vacinacao():
+    st.title("Locais de Vacinação em Recife")
+    
+    st.dataframe(
+        df_locais_vacinacao,
+        use_container_width=True,
+        height=400
+    )
+
+    csv_locais = df_locais_vacinacao.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Baixar Locais de Vacinção (CSV)",
+        csv_locais,
+        "locais_vacinacao.csv",
+        "text/csv"
+    )
+    
+    st.subheader("Distribuição de Locais por Bairro")
+    fig_nuvem = criar_nuvem_palavras(df_locais_vacinacao, "Bairro")
+    st.pyplot(fig_nuvem)
+    
+    pergunta = st.text_area("Faça uma pergunta sobre os locais de vacinação:")
+    if st.button("Gerar Resposta"):
+        with st.spinner("Processando sua pergunta..."):
+            texto_contexto = "\n".join(df_locais_vacinacao.apply(
+                lambda x: f"{x['Local']} - {x['Bairro']}: {x['Endereço']} ({x['Horários']})", axis=1))
+            resposta = responder_pergunta(texto_contexto, pergunta)
+            st.success(f"Resposta: {resposta}")
+
+def renderizar_pagina_estatisticas():
+    st.title("Estatísticas de Vacinação no Brasil")
+    
+    df, df_populacao = carregar_dados_covid()
+    df_populacao["codigo_6_digitos"] = df_populacao["Código municipal"].astype(str).str[:6]
+    df_doses = df.groupby(["Município Ocorrência", "COD IBGE"]).sum().reset_index()
+    
+    df_populacao["pessoas"] = pd.to_numeric(df_populacao["pessoas"], errors="coerce")
     df_populacao.rename(columns={"pessoas": "Pessoas"}, inplace=True)
-    df_mergiado = df_doses_agrupado.merge(df_populacao, how="inner", left_on="COD IBGE", right_on="COD 6 DIGITOS")
-    df_estados_agrupados = df_mergiado[["Total de Doses Aplicadas Monovalente", "UF", "Pessoas"]]
-    df_estados_agrupados = df_estados_agrupados.groupby("UF").sum().reset_index()
-    df_estados_agrupados["Doses por Pessoa"] = round(df_estados_agrupados["Total de Doses Aplicadas Monovalente"]/df_estados_agrupados["Pessoas"], 2)
-    st.table(df_estados_agrupados)
+    
+    df_combinado = df_doses.merge(
+        df_populacao,
+        how="inner",
+        left_on="COD IBGE",
+        right_on="codigo_6_digitos"
+    )
+    
+    df_estados = df_combinado.groupby("UF").agg({
+        "Total de Doses Aplicadas Monovalente": "sum",
+        "Pessoas": "sum"
+    }).reset_index()
+    
+    df_estados["Doses por Pessoa"] = round(
+        df_estados["Total de Doses Aplicadas Monovalente"] / df_estados["Pessoas"],
+        2
+    )
+    
+    fig = px.bar(
+        df_estados,
+        x="UF",
+        y="Doses por Pessoa",
+        title="Doses de Vacina por Pessoa por Estado"
+    )
+    st.plotly_chart(fig)
 
-def render_pagina_2():
-    st.title("Informativos de Vacinação para Sua Segurança")
-    st.subheader("Mapa de Densidade Populacional Ajustada para Casos de COVID-19 em PE")
+    st.download_button(
+        "Baixar Gráfico (HTML)",
+        fig.to_html(),
+        "grafico_vacinacao.html",
+        "text/html"
+    )
+
+    st.dataframe(
+        df_estados,
+        use_container_width=True,
+        height=400
+    )
+
+    csv_estados = df_estados.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Baixar Tabela de Estatísticas (CSV)",
+        csv_estados,
+        "estatisticas_vacinacao.csv",
+        "text/csv"
+    )
+    
+    pergunta = st.text_area("Faça uma pergunta sobre as estatísticas:")
+    if st.button("Gerar Resposta"):
+        with st.spinner("Processando sua pergunta..."):
+            texto_contexto = "\n".join(df_estados.apply(
+                lambda x: f"UF: {x['UF']}, Doses: {x['Total de Doses Aplicadas Monovalente']}, "
+                        f"Pessoas: {x['Pessoas']}, Doses por Pessoa: {x['Doses por Pessoa']}", axis=1))
+            resposta = responder_pergunta(texto_contexto, pergunta)
+            st.success(f"Resposta: {resposta}")
+
+def renderizar_pagina_mapa():
+    st.title("Mapa de Casos de COVID-19")
+    
     municipios = pd.read_csv("venv/data/municipios.csv")
-    municipios["codigo_ibge_6_d"] = municipios["codigo_ibge"].astype(str).apply(lambda x: x[:6]).astype(int)
-    df_pe = df_2024[(df_2024["estado"]=="PE") & (df_2024["semanaEpi"] != 53)]
-    df_pe = df_pe.merge(municipios, how="inner", left_on="codmun", right_on="codigo_ibge_6_d")
+    df_2024 = carregar_dados_2024()
+    
+    municipios["codigo_ibge_6_d"] = municipios["codigo_ibge"].astype(str).str[:6].astype(int)
+    df_pe = df_2024[
+        (df_2024["estado"] == "PE") &
+        (df_2024["semanaEpi"] != 53)
+    ]
+    
+    df_pe = df_pe.merge(
+        municipios,
+        how="inner",
+        left_on="codmun",
+        right_on="codigo_ibge_6_d"
+    )
+    
     df_pe["casos_por_100k"] = df_pe["casosAcumulado"] / (df_pe["populacaoTCU2019"] / 100000)
-    view_state = pdk.ViewState(latitude=-8.05428, longitude=-34.8813, zoom=5)
-    layer = pdk.Layer(
+    
+    df_mapa = df_pe[["latitude", "longitude", "casos_por_100k"]].copy()
+    df_mapa = df_mapa.dropna()
+    
+    visualizacao = pdk.ViewState(latitude=-8.05428, longitude=-34.8813, zoom=5)
+    camada = pdk.Layer(
         "ScatterplotLayer",
-        data=df_pe[["latitude", "longitude", "casos_por_100k"]],
+        data=df_mapa,
         get_position=["longitude", "latitude"],
         get_radius="casos_por_100k / 10",
         radius_scale=3.5,
-        get_color="[200, 30, 0, 160]",
+        get_color=[200, 30, 0, 160],
         pickable=True
     )
-    r = pdk.Deck(layers=[layer], initial_view_state=view_state)
-    st.pydeck_chart(r)
+    
+    mapa = pdk.Deck(layers=[camada], initial_view_state=visualizacao)
+    st.pydeck_chart(mapa)
+    
+    #if st.button("Baixar Mapa como Imagem"):
+    mapa.to_html("mapa_covid.html")
+    with open("mapa_covid.html", "rb") as f:
+            st.download_button(
+                label="Baixar Mapa",
+                data=f,
+                file_name="mapa_covid.html",
+                mime="text/html"
+            )
 
-def render_pagina_3():
-    st.title("Upload e Download de Arquivos")
-    uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
-    if uploaded_file:
-        df_uploaded = pd.read_csv(uploaded_file)
-        st.write("Arquivo carregado com sucesso!")
-        st.write(df_uploaded)
-    st.download_button(
-        label="Baixar dados de vacinação",
-        data=df.to_csv(index=False),
-        file_name="dados_vacinacao.csv",
-        mime="text/csv"
+def renderizar_pagina_arquivos():
+    st.title("Gerenciamento de Arquivos")
+    
+    arquivo = st.file_uploader("Escolha um arquivo CSV", type="csv")
+    if arquivo:
+        df_carregado = pd.read_csv(arquivo)
+        st.write("Prévia do arquivo:")
+        st.dataframe(df_carregado.head(), use_container_width=True)
+        
+        if st.checkbox("Mostrar estatísticas básicas"):
+            st.write("Estatísticas descritivas:")
+            st.write(df_carregado.describe())
+        
+        csv_processado = df_carregado.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Baixar CSV Processado",
+            csv_processado,
+            "dados_processados.csv",
+            "text/csv"
+        )
+    else:
+        st.info("Aguardando upload de arquivo...")
+
+def renderizar_navegacao():
+    st.sidebar.title("Navegação")
+    return st.sidebar.radio(
+        "Escolha uma página:",
+        ["Locais de Vacinação", "Estatísticas de Vacinação", "Mapa de Casos de COVID-19", "Gerenciamento de Arquivos"]
     )
 
-pagina_selecionada = "Mapa"
+pagina = renderizar_navegacao()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("Estatísticas"):
-        pagina_selecionada = "Estatísticas"
-with col2:
-    if st.button("Mapa"):
-        pagina_selecionada = "Mapa"
-with col3:
-    if st.button("Upload e Download"):
-        pagina_selecionada = "Upload e Download"
-
-if pagina_selecionada == "Estatísticas":
-    render_pagina_1()
-elif pagina_selecionada == "Mapa":
-    render_pagina_2()
-elif pagina_selecionada == "Upload e Download":
-    render_pagina_3()
+if pagina == "Locais de Vacinação":
+    renderizar_pagina_vacinacao()
+elif pagina == "Estatísticas de Vacinação":
+    renderizar_pagina_estatisticas()
+elif pagina == "Mapa de Casos de COVID-19":
+    renderizar_pagina_mapa()
+elif pagina == "Gerenciamento de Arquivos":
+    renderizar_pagina_arquivos()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
