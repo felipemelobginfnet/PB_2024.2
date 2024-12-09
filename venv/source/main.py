@@ -13,8 +13,9 @@ import requests
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import plotly.express as px
+import numpy as np
 
-os.environ["HUGGINGFACE_HUB_TOKEN"] = "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"
+os.environ["HUGGINGFACE_HUB_TOKEN"] = "retirada"
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -45,8 +46,10 @@ def carregar_dados_covid():
 
 @st.cache_data(ttl=3600)
 def carregar_dados_2024():
-    df_2024_parte1 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte1_30ago2024.csv", sep=";")
-    df_2024_parte2 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte2_30ago2024.csv", sep=";")
+    df_2024_parte1 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte1_30ago2024.csv", sep=";",
+                                 usecols=["estado", "codmun", "semanaEpi", "populacaoTCU2019", "casosAcumulado"])
+    df_2024_parte2 = pd.read_csv("venv/data/HIST_PAINEL_COVIDBR_2024_Parte2_30ago2024.csv", sep=";",
+                                 usecols=["estado", "codmun", "semanaEpi", "populacaoTCU2019", "casosAcumulado"])
     df_2024 = pd.concat([df_2024_parte1, df_2024_parte2], ignore_index=True)
     return df_2024
 
@@ -73,14 +76,6 @@ def gerar_resposta_locais(entrada: EntradaTexto):
     resposta = responder_pergunta(contexto=texto_contexto, pergunta=entrada.texto)
     return SaidaTexto(texto_original=entrada.texto, resposta=resposta)
 
-def criar_nuvem_palavras(df, coluna):
-    texto = " ".join(df[coluna].astype(str).values)
-    nuvem = WordCloud(width=800, height=400, background_color="white", collocations=False).generate(texto)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(nuvem, interpolation="bilinear")
-    ax.axis("off")
-    return fig
-
 def renderizar_pagina_vacinacao():
     st.title("Locais de Vacinação em Recife")
     
@@ -98,9 +93,15 @@ def renderizar_pagina_vacinacao():
         "text/csv"
     )
     
-    st.subheader("Distribuição de Locais por Bairro")
-    fig_nuvem = criar_nuvem_palavras(df_locais_vacinacao, "Bairro")
-    st.pyplot(fig_nuvem)
+    contagem_bairros = df_locais_vacinacao["Bairro"].value_counts()
+    fig_hist = px.bar(
+        x=contagem_bairros.index,
+        y=contagem_bairros.values,
+        title="Quantidade de Locais por Bairro",
+        labels={"x": "Bairro", "y": "Quantidade de Locais"}
+    )
+    fig_hist.update_layout(showlegend=False)
+    st.plotly_chart(fig_hist)
     
     pergunta = st.text_area("Faça uma pergunta sobre os locais de vacinação:")
     if st.button("Gerar Resposta"):
@@ -137,8 +138,10 @@ def renderizar_pagina_estatisticas():
         2
     )
     
+    df_estados_sorted = df_estados.sort_values("Doses por Pessoa", ascending=False)
+    
     fig = px.bar(
-        df_estados,
+        df_estados_sorted,
         x="UF",
         y="Doses por Pessoa",
         title="Doses de Vacina por Pessoa por Estado"
@@ -153,12 +156,12 @@ def renderizar_pagina_estatisticas():
     )
 
     st.dataframe(
-        df_estados,
+        df_estados_sorted,
         use_container_width=True,
         height=400
     )
 
-    csv_estados = df_estados.to_csv(index=False).encode("utf-8")
+    csv_estados = df_estados_sorted.to_csv(index=False).encode("utf-8")
     st.download_button(
         "Baixar Tabela de Estatísticas (CSV)",
         csv_estados,
@@ -169,7 +172,7 @@ def renderizar_pagina_estatisticas():
     pergunta = st.text_area("Faça uma pergunta sobre as estatísticas:")
     if st.button("Gerar Resposta"):
         with st.spinner("Processando sua pergunta..."):
-            texto_contexto = "\n".join(df_estados.apply(
+            texto_contexto = "\n".join(df_estados_sorted.apply(
                 lambda x: f"UF: {x['UF']}, Doses: {x['Total de Doses Aplicadas Monovalente']}, "
                         f"Pessoas: {x['Pessoas']}, Doses por Pessoa: {x['Doses por Pessoa']}", axis=1))
             resposta = responder_pergunta(texto_contexto, pergunta)
@@ -178,71 +181,113 @@ def renderizar_pagina_estatisticas():
 def renderizar_pagina_mapa():
     st.title("Mapa de Casos de COVID-19")
     
-    municipios = pd.read_csv("venv/data/municipios.csv")
-    df_2024 = carregar_dados_2024()
+    municipios_df = pd.read_csv("venv/data/municipios.csv")
+    dados_2024_df = carregar_dados_2024()
     
-    municipios["codigo_ibge_6_d"] = municipios["codigo_ibge"].astype(str).str[:6].astype(int)
-    df_pe = df_2024[
-        (df_2024["estado"] == "PE") &
-        (df_2024["semanaEpi"] != 53)
-    ]
+    municipios_df["codigo_ibge_6_d"] = municipios_df["codigo_ibge"].astype(str).str[:6].astype(int)
+    dados_pe_df = dados_2024_df[(dados_2024_df["semanaEpi"] != 53) & (dados_2024_df["estado"] == "PE")]
     
-    df_pe = df_pe.merge(
-        municipios,
+    dados_pe_df = dados_pe_df.merge(
+        municipios_df,
         how="inner",
         left_on="codmun",
         right_on="codigo_ibge_6_d"
     )
     
-    df_pe["casos_por_100k"] = df_pe["casosAcumulado"] / (df_pe["populacaoTCU2019"] / 100000)
+    dados_pe_df["casos_por_100k"] = round(dados_pe_df["casosAcumulado"] / (dados_pe_df["populacaoTCU2019"] / 100000), 1)
+    dados_pe_df["casos_normalizados"] = 5 + (70 * (dados_pe_df["casos_por_100k"] - dados_pe_df["casos_por_100k"].min()) / 
+                                            (dados_pe_df["casos_por_100k"].max() - dados_pe_df["casos_por_100k"].min()))
     
-    df_mapa = df_pe[["latitude", "longitude", "casos_por_100k"]].copy()
-    df_mapa = df_mapa.dropna()
+    dados_mapa_df = dados_pe_df[["latitude", "longitude", "casos_normalizados", "casos_por_100k"]].copy()
+    dados_mapa_df = dados_mapa_df.dropna()
     
-    visualizacao = pdk.ViewState(latitude=-8.05428, longitude=-34.8813, zoom=5)
+    visualizacao = pdk.ViewState(
+        latitude=-8.05428,
+        longitude=-34.8813,
+        zoom=5,
+        pitch=0
+    )
+    
     camada = pdk.Layer(
         "ScatterplotLayer",
-        data=df_mapa,
+        data=dados_mapa_df,
         get_position=["longitude", "latitude"],
-        get_radius="casos_por_100k / 10",
-        radius_scale=3.5,
+        get_radius=["casos_normalizados"],
+        radius_scale=100,
+        radius_min_pixels=5,
+        radius_max_pixels=75,
         get_color=[200, 30, 0, 160],
         pickable=True
     )
     
-    mapa = pdk.Deck(layers=[camada], initial_view_state=visualizacao)
+    mapa = pdk.Deck(
+        layers=[camada],
+        initial_view_state=visualizacao,
+        tooltip={"text": "Casos por 100k habitantes: {casos_por_100k}"}
+    )
+    
     st.pydeck_chart(mapa)
     
-    #if st.button("Baixar Mapa como Imagem"):
     mapa.to_html("mapa_covid.html")
-    with open("mapa_covid.html", "rb") as f:
-            st.download_button(
-                label="Baixar Mapa",
-                data=f,
-                file_name="mapa_covid.html",
-                mime="text/html"
-            )
+    with open("mapa_covid.html", "rb") as arquivo:
+        st.download_button(
+            label="Baixar Mapa",
+            data=arquivo,
+            file_name="mapa_covid.html",
+            mime="text/html"
+        )
 
 def renderizar_pagina_arquivos():
     st.title("Gerenciamento de Arquivos")
     
+    st.markdown("""
+    ### Formato do Arquivo CSV de Entrada
+    
+    | Coluna | Tipo | Descrição |
+    |--------|------|-----------|
+    | Município Ocorrência | texto | Nome do município |
+    | COD IBGE | número inteiro | Código IBGE do município (6 dígitos) |
+    | Total de Doses Aplicadas Monovalente | número inteiro | Total de doses aplicadas |
+    """)
+    
+    exemplo_df = pd.DataFrame({
+        'Município Ocorrência': ['Recife', 'Olinda', 'Jaboatão dos Guararapes'],
+        'COD IBGE': [261160, 261110, 260720],
+        'Total de Doses Aplicadas Monovalente': [1500000, 800000, 950000]
+    })
+    
+    st.markdown("### Exemplo do formato esperado:")
+    st.dataframe(exemplo_df, use_container_width=True)
+    
     arquivo = st.file_uploader("Escolha um arquivo CSV", type="csv")
     if arquivo:
-        df_carregado = pd.read_csv(arquivo)
-        st.write("Prévia do arquivo:")
-        st.dataframe(df_carregado.head(), use_container_width=True)
-        
-        if st.checkbox("Mostrar estatísticas básicas"):
-            st.write("Estatísticas descritivas:")
-            st.write(df_carregado.describe())
-        
-        csv_processado = df_carregado.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Baixar CSV Processado",
-            csv_processado,
-            "dados_processados.csv",
-            "text/csv"
-        )
+        try:
+            df_carregado = pd.read_csv(arquivo)
+            colunas_necessarias = ['Município Ocorrência', 'COD IBGE', 'Total de Doses Aplicadas Monovalente']
+            if all(coluna in df_carregado.columns for coluna in colunas_necessarias):
+                try:
+                    df_carregado['COD IBGE'] = df_carregado['COD IBGE'].astype(int)
+                    df_carregado['Total de Doses Aplicadas Monovalente'] = df_carregado['Total de Doses Aplicadas Monovalente'].astype(int)
+                    st.write("Prévia do arquivo:")
+                    st.dataframe(df_carregado.head(), use_container_width=True)
+                    
+                    if st.checkbox("Mostrar estatísticas básicas"):
+                        st.write("Estatísticas descritivas:")
+                        st.write(df_carregado.describe())
+                    
+                    csv_processado = df_carregado.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Baixar CSV Processado",
+                        csv_processado,
+                        "dados_processados.csv",
+                        "text/csv"
+                    )
+                except ValueError:
+                    st.error("Erro nos tipos de dados. Verifique se os campos numéricos contêm apenas números.")
+            else:
+                st.error("O arquivo não contém todas as colunas necessárias. Por favor, verifique o formato do arquivo.")
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo: {str(e)}")
     else:
         st.info("Aguardando upload de arquivo...")
 
