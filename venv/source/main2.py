@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timedelta
 
 
-os.environ["HUGGINGFACE_HUB_TOKEN"] = "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"
+os.environ["HUGGINGFACE_HUB_TOKEN"] = "retirada"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
