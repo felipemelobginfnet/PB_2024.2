@@ -57,20 +57,20 @@ O objetivo é fornecer insights sobre as variações climáticas em **tempo real
 
 ## Cronograma  
 
-### **Fase 1: Coleta de Dados e Configuração do Ambiente (1 semana)**  
+### **Fase 1: Coleta de Dados e Configuração do Ambiente )**  
 - Identificação e coleta de fontes de dados climáticos (arquivos CSV).  
 - Configuração do ambiente de desenvolvimento com **FastAPI**, **Streamlit** e bibliotecas de visualização.  
 
-### **Fase 2: Desenvolvimento da API (2 semanas)**  
+### **Fase 2: Desenvolvimento da API **  
 - Estruturação da API com **FastAPI**.  
 - Implementação de rotas **GET** e **POST** para consulta e envio de dados.  
 - Desenvolvimento do modelo de **NLP** para consultas interativas.  
 
-### **Fase 3: Desenvolvimento da Interface em Streamlit (2 semanas)**  
+### **Fase 3: Desenvolvimento da Interface em Streamlit **  
 - Criação da interface com visualizações interativas (gráficos e mapas).  
 - Integração com a API para exibição dos dados processados.  
 
-### **Fase 4: Testes, Validação e Documentação (1 semana)**  
+### **Fase 4: Testes, Validação e Documentação **  
 - Testes de funcionalidade e integração entre API e interface.  
 - Validação dos dados e ajustes finais.  
 - Documentação técnica e instruções para o usuário.  
