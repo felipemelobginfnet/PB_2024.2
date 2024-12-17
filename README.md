@@ -20,7 +20,6 @@ Este projeto consiste em uma aplicação interativa que analisa dados climático
 - **`app.py`**: Código principal que integra a API com rotas e a aplicação Streamlit.  
 - **`venv/`**: Ambiente virtual contendo as dependências do projeto.  
 - **`data/`**: Diretório contendo arquivos de dados climáticos históricos.  
-- **`static/`**: Recursos auxiliares, como imagens e arquivos estáticos.  
 - **`main.py`**: Ponto de entrada para executar a aplicação.
 
 ---
@@ -28,9 +27,7 @@ Este projeto consiste em uma aplicação interativa que analisa dados climático
 ## Instalação e Execução  
 
 1. **Clone este repositório e navegue até a pasta do projeto:**  
-   ```bash
-   git clone <url-do-repositorio>
-   cd <nome-da-pasta>
+
 
 # Criar ambiente virtual
 python -m venv venv
